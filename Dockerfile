@@ -17,10 +17,9 @@ RUN npm run -w @simple-tunnel/protocol build \
  && npm run -w @simple-tunnel/server build \
  && npm prune --omit=dev --workspaces
 
-FROM node:20-alpine AS runner
+FROM base AS runner
 RUN apk add --no-cache tini
 ENV NODE_ENV=production
-WORKDIR /app
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages/server/dist ./packages/server/dist
