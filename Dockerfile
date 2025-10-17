@@ -8,7 +8,7 @@ COPY package.json ./
 COPY packages/server/package.json packages/server/package.json
 COPY packages/cli/package.json packages/cli/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
-RUN npm ci --workspaces
+RUN npm install --workspaces
 
 FROM deps AS build
 COPY tsconfig.base.json ./
@@ -32,4 +32,3 @@ EXPOSE 3001
 ENV PORT=3000
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "packages/server/dist/index.js"]
-
