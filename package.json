@@ -1,0 +1,21 @@
+{
+  "name": "simple-tunnel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted reverse tunnel (Ngrok-like) with Node.js",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run -w @simple-tunnel/protocol build && npm run -w @simple-tunnel/server build && npm run -w @simple-tunnel/cli build",
+    "dev:server": "npm run -w @simple-tunnel/server dev",
+    "dev:cli": "npm run -w @simple-tunnel/cli dev",
+    "start": "npm run -w @simple-tunnel/server start"
+  }
+}
+
