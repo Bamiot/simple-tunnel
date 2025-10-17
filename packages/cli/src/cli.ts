@@ -106,16 +106,16 @@ function send(frame: any) {
 async function handleOpenStream(msg: any) {
   try {
     const localUrl = `http://${opts.host}:${opts.port}${msg.path || '/'}`;
-    const headers = msg.headers || {};
+    const headers: Record<string, string> = { ...(msg.headers || {}) } as any;
+    // Force identity to avoid upstream compression mismatches
+    headers['accept-encoding'] = 'identity';
     const method = String(msg.method || 'GET').toUpperCase();
     const bodyStream = new PassThrough();
     streams.set(msg.streamId, { body: bodyStream });
     const { statusCode, headers: respHeaders, body } = await request(localUrl, {
       method: method as any,
       headers,
-      body: ['GET', 'HEAD'].includes(method) ? undefined : bodyStream,
-      // Preserve upstream compression so headers/content-encoding match the body
-      decompress: false
+      body: ['GET', 'HEAD'].includes(method) ? undefined : bodyStream
     });
     // Send response start (status + headers)
     ws.send(packr.pack({ t: FrameType.RESP_START, tunnelId: msg.tunnelId, streamId: msg.streamId, statusCode, headers: objectifyHeaders(respHeaders) } as any));

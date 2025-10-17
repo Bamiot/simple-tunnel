@@ -36,16 +36,6 @@ await app.register(underPressure);
 await app.register(rateLimit, { max: 200, timeWindow: "1 minute" });
 await app.register(websocket);
 
-// log all requests, useful for debugging, can be activated via LOG_ALL_REQUESTS env var
-if (process.env.LOG_ALL_REQUESTS === "true") {
-  app.addHook("onRequest", async (req, reply) => {
-    req.log.info(
-      { method: req.method, url: req.url, headers: req.headers },
-      "Incoming request"
-    );
-  });
-}
-
 app.get("/health", async () => ({ ok: true }));
 
 // WebSocket control endpoint used by clients to open a tunnel
@@ -185,6 +175,7 @@ app.all("/*", async (req, reply) => {
   for (const [k, v] of Object.entries(req.headers)) {
     if (typeof v === "string") headers[k] = v;
   }
+  const fwdHeaders = sanitizeRequestHeaders(headers);
   // Track response streaming and timeout
   const timeout = setTimeout(() => {
     info.streams.delete(streamId);
@@ -202,7 +193,7 @@ app.all("/*", async (req, reply) => {
     streamId,
     method: req.method,
     path: urlPath,
-    headers,
+    headers: fwdHeaders,
   });
   // Forward request body if any
   if (req.raw.readable && !["GET", "HEAD"].includes(req.method)) {
@@ -247,9 +238,20 @@ function normalizeHeaders(h: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(h)) {
     const lk = k.toLowerCase();
-    if (["transfer-encoding", "connection", "keep-alive", "content-length"].includes(lk))
-      continue;
+    if (["transfer-encoding", "connection", "keep-alive", "content-length"].includes(lk)) continue;
     out[k] = v;
+  }
+  return out;
+}
+
+function sanitizeRequestHeaders(h: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(h)) {
+    const lk = k.toLowerCase();
+    if (["host", "content-length", "transfer-encoding", "connection", "keep-alive", "proxy-connection", "upgrade", "expect"].includes(lk)) {
+      continue;
+    }
+    out[k] = v as string;
   }
   return out;
 }

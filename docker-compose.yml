@@ -15,5 +15,3 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
-    # labels:
-    #   - "traefik.http.routers.preview-simpletunnel.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.${DOMAIN_BASE}`)"
