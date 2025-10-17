@@ -247,7 +247,7 @@ function normalizeHeaders(h: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(h)) {
     const lk = k.toLowerCase();
-    if (["transfer-encoding", "connection", "keep-alive"].includes(lk))
+    if (["transfer-encoding", "connection", "keep-alive", "content-length"].includes(lk))
       continue;
     out[k] = v;
   }

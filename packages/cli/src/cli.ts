@@ -113,7 +113,9 @@ async function handleOpenStream(msg: any) {
     const { statusCode, headers: respHeaders, body } = await request(localUrl, {
       method: method as any,
       headers,
-      body: ['GET', 'HEAD'].includes(method) ? undefined : bodyStream
+      body: ['GET', 'HEAD'].includes(method) ? undefined : bodyStream,
+      // Preserve upstream compression so headers/content-encoding match the body
+      decompress: false
     });
     // Send response start (status + headers)
     ws.send(packr.pack({ t: FrameType.RESP_START, tunnelId: msg.tunnelId, streamId: msg.streamId, statusCode, headers: objectifyHeaders(respHeaders) } as any));
