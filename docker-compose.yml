@@ -10,9 +10,9 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DOMAIN_BASE=${DOMAIN_BASE}
-    ports:
-      - "3000:3000"
-      # - "3001:3001" # optional metrics/admin
+    # ports:
+    # - "3000:3000"
+    # - "3001:3001" # optional metrics/admin
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 30s
