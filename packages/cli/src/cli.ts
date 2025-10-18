@@ -75,7 +75,10 @@ ws.on('message', (data: Buffer) => {
       console.log(kleur.green(`Public URL: ${url}`));
       console.log(kleur.gray(`Local target: http://${opts.host}:${opts.port}`));
     } else if (msg.t === FrameType.OPEN_STREAM) {
-      void handleOpenStream(msg);
+      // Pre-create body stream to avoid race with incoming REQ_DATA frames
+      const bodyStream = new PassThrough();
+      streams.set(msg.streamId, { body: bodyStream });
+      void handleOpenStream(msg, bodyStream);
     } else if (msg.t === FrameType.REQ_DATA) {
       const entry = streams.get(msg.streamId);
       if (entry && msg.chunk) entry.body.write(Buffer.from(msg.chunk));
@@ -103,19 +106,19 @@ function send(frame: any) {
   ws.send(packr.pack(frame));
 }
 
-async function handleOpenStream(msg: any) {
+async function handleOpenStream(msg: any, bodyStream?: PassThrough) {
   try {
     const localUrl = `http://${opts.host}:${opts.port}${msg.path || '/'}`;
     const headers: Record<string, string> = { ...(msg.headers || {}) } as any;
     // Force identity to avoid upstream compression mismatches
     headers['accept-encoding'] = 'identity';
     const method = String(msg.method || 'GET').toUpperCase();
-    const bodyStream = new PassThrough();
-    streams.set(msg.streamId, { body: bodyStream });
+    const streamRef = bodyStream ?? new PassThrough();
+    if (!bodyStream) streams.set(msg.streamId, { body: streamRef });
     const { statusCode, headers: respHeaders, body } = await request(localUrl, {
       method: method as any,
       headers,
-      body: ['GET', 'HEAD'].includes(method) ? undefined : bodyStream
+      body: ['GET', 'HEAD'].includes(method) ? undefined : streamRef
     });
     // Send response start (status + headers)
     ws.send(packr.pack({ t: FrameType.RESP_START, tunnelId: msg.tunnelId, streamId: msg.streamId, statusCode, headers: objectifyHeaders(respHeaders) } as any));
