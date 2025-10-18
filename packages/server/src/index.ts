@@ -193,8 +193,10 @@ app.all("/*", async (req, reply) => {
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(req.headers)) {
     if (typeof v === "string") headers[k] = v;
+    else if (Array.isArray(v)) headers[k] = v.join(", ");
   }
   const fwdHeaders = sanitizeRequestHeaders(headers);
+  const expectedLen = headers["content-length"] ? Number(headers["content-length"]) : undefined;
   // Track response streaming and timeout
   const timeout = setTimeout(() => {
     info.streams.delete(streamId);
@@ -237,7 +239,7 @@ app.all("/*", async (req, reply) => {
   if (process.env.LOG_PUBLIC_REQUESTS === "true") {
     const ent = info.streams.get(streamId);
     if (ent) {
-      app.log.info({ sub, streamId, method: ent.method, path: ent.path, reqBytes: ent.reqBytes }, "Req body forwarded");
+      app.log.info({ sub, streamId, method: ent.method, path: ent.path, reqBytes: ent.reqBytes, expectedLen }, "Req body forwarded");
     }
   }
   return;
