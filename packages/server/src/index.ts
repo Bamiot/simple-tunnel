@@ -19,10 +19,7 @@ type TunnelInfo = {
   subdomain: string;
   createdAt: number;
   nextStreamId: number;
-  streams: Map<
-    number,
-    { reply: any; timeout: NodeJS.Timeout; headersSent: boolean }
-  >;
+  streams: Map<number, { reply: any; timeout: NodeJS.Timeout; headersSent: boolean; method?: string; path?: string; contentType?: string; reqBytes: number; resBytes: number; startedAt: number; statusCode?: number }>;
 };
 
 const tunnels = new Map<string, TunnelInfo>(); // key: subdomain
@@ -45,7 +42,7 @@ app.get("/connect", { websocket: true }, (socket: WebSocket, req) => {
   let assignedSubdomain: string | undefined;
   const tunnelId = `t_${Math.random().toString(36).slice(2, 10)}`;
 
-  socket.on("message", (data: Buffer) => {
+  socket.on("message", async (data: Buffer) => {
     try {
       const msg = unpackr.unpack(data) as any;
       switch (msg.t) {
@@ -95,6 +92,7 @@ app.get("/connect", { websocket: true }, (socket: WebSocket, req) => {
           const entry = info.streams.get(streamId);
           if (!entry || entry.headersSent) break;
           entry.headersSent = true;
+          entry.statusCode = statusCode || 200;
           try {
             const res = entry.reply.raw as import("http").ServerResponse;
             res.writeHead(statusCode || 200, normalizeHeaders(headers || {}));
@@ -113,7 +111,12 @@ app.get("/connect", { websocket: true }, (socket: WebSocket, req) => {
           if (!entry) break;
           try {
             const res = entry.reply.raw as import("http").ServerResponse;
-            if (chunk) res.write(Buffer.from(chunk));
+            if (chunk) {
+              const buf = Buffer.from(chunk);
+              entry.resBytes += buf.length;
+              const ok = res.write(buf);
+              if (!ok) await onceDrain(res);
+            }
           } catch (e) {
             req.log.error({ e }, "Failed to write response chunk");
           }
@@ -135,6 +138,22 @@ app.get("/connect", { websocket: true }, (socket: WebSocket, req) => {
               res.end();
             } catch (e) {
               req.log.error({ e }, "Failed to end response");
+            }
+            if (process.env.LOG_PUBLIC_REQUESTS === "true") {
+              const ms = Date.now() - entry.startedAt;
+              app.log.info(
+                {
+                  sub: assignedSubdomain,
+                  streamId,
+                  method: entry.method,
+                  path: entry.path,
+                  statusCode: entry.statusCode,
+                  reqBytes: entry.reqBytes,
+                  resBytes: entry.resBytes,
+                  ms,
+                },
+                "Proxy complete",
+              );
             }
           }
           break;
@@ -183,7 +202,7 @@ app.all("/*", async (req, reply) => {
       reply.code(504).send({ error: "Upstream timeout" });
     } catch {}
   }, 30000);
-  info.streams.set(streamId, { reply, timeout, headersSent: false });
+  info.streams.set(streamId, { reply, timeout, headersSent: false, method: req.method, path: urlPath, contentType: headers["content-type"] || undefined, reqBytes: 0, resBytes: 0, startedAt: Date.now() });
   // Switch to manual streaming
   reply.hijack();
   // Ask client to open stream against its local target
@@ -198,6 +217,8 @@ app.all("/*", async (req, reply) => {
   // Forward request body if any
   if (req.raw.readable && !["GET", "HEAD"].includes(req.method)) {
     for await (const chunk of req.raw as any as AsyncIterable<Buffer>) {
+      const ent = info.streams.get(streamId);
+      if (ent) ent.reqBytes += chunk.length;
       send(info.ws, {
         t: FrameType.REQ_DATA,
         tunnelId: info.tunnelId,
@@ -242,6 +263,12 @@ function normalizeHeaders(h: Record<string, string>): Record<string, string> {
     out[k] = v;
   }
   return out;
+}
+
+function onceDrain(res: import('http').ServerResponse): Promise<void> {
+  return new Promise((resolve) => {
+    res.once('drain', resolve);
+  });
 }
 
 function sanitizeRequestHeaders(h: Record<string, string>): Record<string, string> {
