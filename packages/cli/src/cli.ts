@@ -106,10 +106,18 @@ ws.on('message', (data: Buffer) => {
       } else if (entry.mode === 'stream' && entry.body) {
         entry.body.write(buf);
       }
+      if (process.env.SIMPLE_TUNNEL_LOG === 'true') {
+        const total = (entry.chunks?.reduce((n, b) => n + b.length, 0) ?? 0);
+        console.log(kleur.gray(`[stream ${msg.streamId}] REQ_DATA +${buf.length} bytes, total=${total}`));
+      }
     } else if (msg.t === FrameType.END && msg.phase === 'req') {
       const entry = streams.get(msg.streamId);
       if (!entry) return;
       if (entry.mode === 'buffer') {
+        if (process.env.SIMPLE_TUNNEL_LOG === 'true') {
+          const total = Buffer.concat(entry.chunks || []).length;
+          console.log(kleur.gray(`[stream ${msg.streamId}] REQ END, buffered=${total} bytes`));
+        }
         void handleBufferedRequest(msg.streamId, entry);
       } else if (entry.mode === 'stream' && entry.body) {
         entry.body.end();

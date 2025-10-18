@@ -234,6 +234,12 @@ app.all("/*", async (req, reply) => {
     streamId,
     phase: "req",
   } as any);
+  if (process.env.LOG_PUBLIC_REQUESTS === "true") {
+    const ent = info.streams.get(streamId);
+    if (ent) {
+      app.log.info({ sub, streamId, method: ent.method, path: ent.path, reqBytes: ent.reqBytes }, "Req body forwarded");
+    }
+  }
   return;
 });
 
