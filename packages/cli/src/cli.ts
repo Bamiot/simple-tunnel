@@ -54,7 +54,16 @@ const connTimer = setTimeout(() => {
   spinner.fail('Timeout connecting to server');
   console.error(kleur.yellow('Tips: ensure the server is running and reachable at the URL above. If using npm on Windows, pass arguments as positionals: <port> <connect> [subdomain].'));
 }, 8000);
-const streams = new Map<number, { body: PassThrough }>();
+type StreamCtx = {
+  mode: 'stream' | 'buffer';
+  body?: PassThrough;
+  chunks?: Buffer[];
+  headers?: Record<string, string>;
+  method?: string;
+  path?: string;
+  tunnelId?: string;
+};
+const streams = new Map<number, StreamCtx>();
 
 ws.on('open', () => {
   clearTimeout(connTimer);
@@ -75,16 +84,36 @@ ws.on('message', (data: Buffer) => {
       console.log(kleur.green(`Public URL: ${url}`));
       console.log(kleur.gray(`Local target: http://${opts.host}:${opts.port}`));
     } else if (msg.t === FrameType.OPEN_STREAM) {
-      // Pre-create body stream to avoid race with incoming REQ_DATA frames
-      const bodyStream = new PassThrough();
-      streams.set(msg.streamId, { body: bodyStream });
-      void handleOpenStream(msg, bodyStream);
+      const method = String(msg.method || 'GET').toUpperCase();
+      const headers = (msg.headers || {}) as Record<string, string>;
+      const contentType = (headers['content-type'] || headers['Content-Type'] || '').toLowerCase();
+      const path = msg.path || '/';
+      const preferStream = process.env.SIMPLE_TUNNEL_STREAM === 'true';
+      const shouldBuffer = !['GET', 'HEAD'].includes(method) && !preferStream;
+      if (shouldBuffer) {
+        streams.set(msg.streamId, { mode: 'buffer', chunks: [], headers, method, path, tunnelId: msg.tunnelId });
+      } else {
+        const bodyStream = new PassThrough();
+        streams.set(msg.streamId, { mode: 'stream', body: bodyStream, headers, method, path, tunnelId: msg.tunnelId });
+        void handleOpenStream(msg, bodyStream);
+      }
     } else if (msg.t === FrameType.REQ_DATA) {
       const entry = streams.get(msg.streamId);
-      if (entry && msg.chunk) entry.body.write(Buffer.from(msg.chunk));
+      if (!entry || !msg.chunk) return;
+      const buf = Buffer.from(msg.chunk);
+      if (entry.mode === 'buffer') {
+        entry.chunks!.push(buf);
+      } else if (entry.mode === 'stream' && entry.body) {
+        entry.body.write(buf);
+      }
     } else if (msg.t === FrameType.END && msg.phase === 'req') {
       const entry = streams.get(msg.streamId);
-      if (entry) entry.body.end();
+      if (!entry) return;
+      if (entry.mode === 'buffer') {
+        void handleBufferedRequest(msg.streamId, entry);
+      } else if (entry.mode === 'stream' && entry.body) {
+        entry.body.end();
+      }
     }
   } catch (e) {
     spinner.fail('Failed to parse server message');
@@ -110,11 +139,16 @@ async function handleOpenStream(msg: any, bodyStream?: PassThrough) {
   try {
     const localUrl = `http://${opts.host}:${opts.port}${msg.path || '/'}`;
     const headers: Record<string, string> = { ...(msg.headers || {}) } as any;
-    // Force identity to avoid upstream compression mismatches
-    headers['accept-encoding'] = 'identity';
+    // Preserve upstream compression for better asset load (fonts, etc.)
+    if (process.env.SIMPLE_TUNNEL_FORCE_IDENTITY === 'true') {
+      headers['accept-encoding'] = 'identity';
+    } else {
+      // Allow upstream to choose compression; avoid overriding accept-encoding
+      delete (headers as any)['accept-encoding'];
+    }
     const method = String(msg.method || 'GET').toUpperCase();
     const streamRef = bodyStream ?? new PassThrough();
-    if (!bodyStream) streams.set(msg.streamId, { body: streamRef });
+    if (!bodyStream) streams.set(msg.streamId, { mode: 'stream', body: streamRef, headers, method, path: msg.path, tunnelId: msg.tunnelId });
     const { statusCode, headers: respHeaders, body } = await request(localUrl, {
       method: method as any,
       headers,
@@ -132,6 +166,38 @@ async function handleOpenStream(msg: any, bodyStream?: PassThrough) {
   } catch (e) {
     ws.send(packr.pack({ t: FrameType.RESP_START, tunnelId: msg.tunnelId, streamId: msg.streamId, statusCode: 502 } as any));
     ws.send(packr.pack({ t: FrameType.END, tunnelId: msg.tunnelId, streamId: msg.streamId, phase: 'res' } as any));
+  }
+}
+
+async function handleBufferedRequest(streamId: number, entry: StreamCtx) {
+  try {
+    const localUrl = `http://${opts.host}:${opts.port}${entry.path || '/'}`;
+    const headers: Record<string, string> = { ...(entry.headers || {}) } as any;
+    if (process.env.SIMPLE_TUNNEL_FORCE_IDENTITY === 'true') {
+      headers['accept-encoding'] = 'identity';
+    } else {
+      delete (headers as any)['accept-encoding'];
+    }
+    const bodyBuf = Buffer.concat(entry.chunks || []);
+    headers['content-length'] = String(bodyBuf.length);
+    const method = (entry.method || 'POST').toUpperCase();
+    const { statusCode, headers: respHeaders, body } = await request(localUrl, {
+      method: method as any,
+      headers,
+      body: bodyBuf
+    });
+    ws.send(packr.pack({ t: FrameType.RESP_START, tunnelId: entry.tunnelId, streamId, statusCode, headers: objectifyHeaders(respHeaders) } as any));
+    for await (const chunk of body as any as AsyncIterable<Buffer>) {
+      if (chunk && chunk.length) {
+        ws.send(packr.pack({ t: FrameType.RESP_DATA, tunnelId: entry.tunnelId, streamId, chunk } as any));
+      }
+    }
+    ws.send(packr.pack({ t: FrameType.END, tunnelId: entry.tunnelId, streamId, phase: 'res' } as any));
+  } catch (e) {
+    ws.send(packr.pack({ t: FrameType.RESP_START, tunnelId: entry.tunnelId, streamId, statusCode: 502 } as any));
+    ws.send(packr.pack({ t: FrameType.END, tunnelId: entry.tunnelId, streamId, phase: 'res' } as any));
+  } finally {
+    streams.delete(streamId);
   }
 }
 
